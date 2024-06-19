@@ -1,0 +1,8 @@
+imageio~=2.34.1
+emoji~=2.12.1
+moviepy~=1.0.3
+sqlite~=3.45.3
+pillow~=10.3.0
+requests~=2.32.3
+cloudscraper~=1.2.71
+tenacity~=8.4.1
