@@ -7,11 +7,11 @@
 3.  在项目根目录 安装依赖 `pip install -r requirements.txt`
 4.  运行 `python main.py ` 首次运行会在目录下生成config.ini 文件
 5.  配置config.ini  需要从 https://www.pixiv.net 获取 cookie 和 id 教程如下:
-   - 在登录的情况下进入 pixiv 首页
+   - 在登录的情况下进入 pixiv 首页 点击自己头像
    - 点击鼠标右键-> 检查 或者 按下键盘 F12 然后 -> 点击网络(Network) 刷新界面
    - 点击 Fetch/XHR 找个有cookie 的链接 然后复制 cookie 到配置文件
-   - 点击自己头像 然后从url获取 自身id 填入config.ini
-   - ![img](https://todo.png)
+   - 查看网页url获取 自身id 填入config.ini
+   - ![img](images/2416710515.png)
 
 ## Example:
 ```python
@@ -240,6 +240,9 @@ class Pixiv:
         """
 
 ```
+
+## 效果图
+![img](images/1520969853.png)
 
 ## License
 
