@@ -27,16 +27,8 @@ for offset in range(24, res.total, limit):
     res = p.user_following(offset, limit)
     users.extend(res.users)
 
-for user in users:
-    # 用户所有作品
-    json_result = p.user_works(user.userId)
-    for illust in json_result['manga'].values():
-        work = p.work_detail(illust.id)
-        p.download_work(work)
-
-    for illust in json_result['illusts'].values():
-        work = p.work_detail(illust.id)
-        p.download_work(work)
+# 获取所有关注的用户的所有作品
+p.download_user_following()
 ```
 
 > 可自行调用Pixiv 类组合使用
