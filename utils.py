@@ -24,6 +24,7 @@ if not os.path.exists(config_path):
     c['Settings'] = {
         'root': os.getcwd(),
         'db_path': os.path.join(os.getcwd(), 'pixiv.db'),
+        'max_sleep_counter': 120,
         'illust_file_name': '{user}/{title}{id}',
         'manga_file_name': '{user}/{title}{id}',
         'series_manga_file_name': '{user}/{series_title}/#{series_order} {title}{id}'
@@ -56,4 +57,4 @@ def create_gif(image_folder, output_file, frame_duration=None):
     image_files.sort()
     clip = ImageSequenceClip(image_files, durations=frame_duration)
     # clip.write_videofile(output_file, fps=24)
-    clip.write_gif(output_file, fps=24)
+    clip.write_gif(output_file, fps=12)

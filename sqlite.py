@@ -3,7 +3,7 @@ import time
 import utils
 
 db_name = '/Users/mac/Desktop/pixiv/pixiv.db'
-conn = sqlite3.connect(db_name)
+conn = sqlite3.connect(db_name, check_same_thread=False)
 # conn = sqlite3.connect(src.config.get('Settings', 'db_path'))
 
 
@@ -63,9 +63,16 @@ def insert_data(pixiv_id, name, author, author_id, t, path):
     conn.commit()
 
 
-def query_all_data():
+def query_all_pixiv():
     cursor = conn.cursor()
     cursor.execute('SELECT * FROM pixiv')
+    rows = cursor.fetchall()
+    return rows
+
+
+def query_all_errors():
+    cursor = conn.cursor()
+    cursor.execute('SELECT * FROM error')
     rows = cursor.fetchall()
     return rows
 
@@ -97,14 +104,22 @@ def delete_by_id(id):
     conn.commit()
 
 
+def delete_error_by_id(id):
+    cursor = conn.cursor()
+    cursor.execute('DELETE FROM error WHERE id = ?', (id,))
+    conn.commit()
+
+
 # 示例使用
 if __name__ == "__main__":
     try:
+        errors = query_all_errors()
+        print(errors)
         # print(work_exists('22222', '(C101) [八百萬堂 (AkiFn)] 誰も知らない夜 (オリジナル)'))
         # print(work_exists('110123836'))
         # 创建表
         # create_table()
-        work_exists('99677275', "ina99677275")
+        # work_exists('99677275', "ina99677275")
         #
         # # 插入数据
         # insert_data(227727, 'test', 'a1', 1, '', '')

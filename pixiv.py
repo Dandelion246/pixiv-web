@@ -1,14 +1,16 @@
 import json
 import os.path
+import re
 import shutil
 import threading
+import time
 import traceback
 import zipfile
 from utils import remove_emojis, filter_file_name, create_gif, config
 from logger import logger
 from http_client import HttpClient
 from config import _HEADERS, _MODE, _LANG, _SEARCH_URL_TYPE, _CONTENT_TYPE, _TYPE, JsonDict, _TYPE_DICT
-from sqlite import work_exists, pixiv_id_exists, insert_data, insert_error_data
+from sqlite import work_exists, pixiv_id_exists, insert_data, insert_error_data, query_all_errors, delete_error_by_id
 
 
 class Pixiv:
@@ -19,6 +21,7 @@ class Pixiv:
         self.http.headers = _HEADERS
         self.version = 'f5f50bb540731f95e7b1eee0509ac311fd4e9525'
         self.root: str = config['Settings']['root']
+        self.sleep_counter = 0
 
     def set_proxy(self, proxy_hosts: str = "http://127.0.0.1:1080"):
         self.http.set_proxy(proxy_hosts)
@@ -28,7 +31,25 @@ class Pixiv:
         # TODO 未处理过度使用的情况
         response = self.http.request(url, method, **kwargs)
         return json.loads(response.text, object_hook=JsonDict)
-        
+
+    def login(self, email, password):
+        # TODO 待完成
+        r = self.request("https://accounts.pixiv.net/login?lang=zh&source=pc&view_type=page&ref=wwwtop_accounts_index")
+        pattern = re.compile('<input type="hidden" name="post_key" value="(.*?)">', re.S)
+        post_key = re.search(pattern, r.content).group(1)
+        data = {
+            "pixiv_id": email,
+            "password": password,
+            "captcha": "",
+            "g_recaptcha_response": "",
+            "post_key": post_key,
+            "source": "pc",
+            "ref": "wwwtop_accounts_index",
+            "return_to": "https://www.pixiv.net/"
+        }
+        self.request("https://accounts.pixiv.net/api/login?lang=zh",
+                     'post', **{'data': data})
+
     def user_detail(self, user_id: int | str):
         """
         用户详情
@@ -562,7 +583,7 @@ class Pixiv:
                 logger.info(f"动图[{title}]已存在")
 
             ugoira = self.ugoira_metadata(illust.id)
-            file_name = illust.title + 'ugoira_tmp.zip'
+            file_name = illust.id + 'ugoira_tmp.zip'
             extract_path = f"ugoira_tmp{illust.id}"
             self.download(ugoira.originalSrc, fname=file_name)
             f = zipfile.ZipFile(file_name, 'r')
@@ -591,12 +612,66 @@ class Pixiv:
 
             logger.info("动图作品下载完毕.")
 
+    def errors_download(self):
+        errors = query_all_errors()
+        for err in errors:
+            try:
+                self.download(err['url'], err['save_path'])
+                delete_error_by_id(err['id'])
+                name = os.path.basename(err['url'])
+            except:
+                logger.error(traceback.format_exc())
+                continue
+
+    def download_user_following(self, skip_user: list = None):
+        """
+        下载关注的所有用户的所有作品
+        :param skip_user: 需要跳过的作者id
+        :param sleep:
+        :return:
+        """
+        logger.info('开始检查订阅内容')
+        # 获取所有关注的用户
+        res = self.user_following(0, 24)
+        users = res.users
+        limit = 24
+        # for offset in range(96, res.total, limit):
+        for offset in range(24, res.total, limit):
+            res = self.user_following(offset, limit)
+            users.extend(res.users)
+
+        def process_works(works):
+            for illust in works.values():
+                if self.sleep_counter >= config['Settings']['max_sleep_counter']:
+                    time.sleep(config['Settings']['sleep'])
+                    self.sleep_counter = 0
+
+                title = remove_emojis(illust.title)
+                if work_exists(illust.id, f"{title}{illust.id}"):
+                    logger.info(f"[{title}]已存在")
+                    continue
+
+                work = self.work_detail(illust.id)
+                self.download_work(work)
+                self.sleep_counter += 1
+
+        for user in users:
+            logger.info(f"当前抓取作者: {user.userName}")
+            if user.userId in skip_user:
+                logger.info(f"[{user.userId}] 跳过")
+                continue
+
+            # 用户所有作品
+            json_result = self.user_works(user.userId)
+            process_works(json_result['manga'])
+            process_works(json_result['illusts'])
+
 
 if __name__ == '__main__':
     pixiv = Pixiv()
     pixiv.root = '/Users/mac/Desktop/pixiv'
-    work = pixiv.work_detail(105191483)
-    pixiv.download_work(work)
+    # work = pixiv.work_detail(115103841)
+    # pixiv.download_work(work)
     # pixiv.make_filename(work)
 
     # res = pixiv.user_works(22950794)
