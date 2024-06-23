@@ -6,3 +6,4 @@ pillow~=10.3.0
 requests~=2.32.3
 cloudscraper~=1.2.71
 tenacity~=8.4.1
+beautifulsoup4~=4.12.3

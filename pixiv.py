@@ -6,11 +6,58 @@ import threading
 import time
 import traceback
 import zipfile
+from datetime import datetime
+from bs4 import BeautifulSoup
+
 from utils import remove_emojis, filter_file_name, create_gif, config
 from logger import logger
 from http_client import HttpClient
 from config import _HEADERS, _MODE, _LANG, _SEARCH_URL_TYPE, _CONTENT_TYPE, _TYPE, JsonDict, _TYPE_DICT
 from sqlite import work_exists, pixiv_id_exists, insert_data, insert_error_data, query_all_errors, delete_error_by_id
+
+
+def is_skip_user(user_id: int | str) -> bool:
+    return str(user_id) in [num.strip() for num in config['Settings']['skip_user'].split(',')]
+
+
+def make_filename(illust: dict, url='') -> str:
+    name_rule = ''
+    res = ''
+    name_dict = {
+        'id': os.path.basename(url) if url else '',
+        'user': filter_file_name(remove_emojis(illust.userName)),
+        'user_id': illust.userId,
+        'title': filter_file_name(remove_emojis(illust.title)),
+        'page_title': filter_file_name(remove_emojis(illust.alt)),
+        'type': illust.type,
+        'id_num': illust.id,
+        'date': datetime.fromisoformat(illust.createDate).strftime("%Y-%m-%d"),
+        'upload_date': datetime.fromisoformat(illust.uploadDate).strftime("%Y-%m-%d"),
+        'bmk': illust.bookmarkCount,
+        'like': illust.likeCount,
+        'bmk_id': illust.bookmarkData.id if illust.bookmarkData else '',
+        'view': illust.viewCount,
+        'series_title': illust.seriesNavData.title if illust.seriesNavData else '',
+        'series_order': illust.seriesNavData.order if illust.seriesNavData else '',
+        'series_id': illust.seriesNavData.seriesId if illust.seriesNavData else '',
+        'AI': 'AI' if int(illust.aiType) == 1 else '',
+        'tags': ",".join([item["tag"] for item in illust.tags.tags]),
+    }
+
+    if illust.type in ['illust', 'ugoira']:
+        name_rule = config['Settings']['illust_file_name']
+        if illust.type == 'ugoira':
+            name_dict['id'] = f"{name_dict['id_num']}.gif"
+    elif illust.type == 'manga':
+        if illust.seriesNavData:
+            name_rule = config['Settings']['series_manga_file_name']
+        else:
+            name_rule = config['Settings']['manga_file_name']
+
+    if name_rule:
+        res = name_rule.format(**name_dict)
+
+    return res
 
 
 class Pixiv:
@@ -34,21 +81,25 @@ class Pixiv:
 
     def login(self, email, password):
         # TODO 待完成
-        r = self.request("https://accounts.pixiv.net/login?lang=zh&source=pc&view_type=page&ref=wwwtop_accounts_index")
-        pattern = re.compile('<input type="hidden" name="post_key" value="(.*?)">', re.S)
-        post_key = re.search(pattern, r.content).group(1)
+        # r = self.http.client.get(
+        #     "https://accounts.pixiv.net/login?lang=zh&source=pc&view_type=page&ref=wwwtop_accounts_index",
+        # )
+        #
+        # pattern = re.compile('<input type="hidden" name="post_key" value="(.*?)">', re.S)
+        # post_key = re.search(pattern, r.text).group(1)
         data = {
             "pixiv_id": email,
             "password": password,
             "captcha": "",
             "g_recaptcha_response": "",
-            "post_key": post_key,
+            "post_key": '885d11c7fa8ec15d7fbc538518ab516a',
             "source": "pc",
             "ref": "wwwtop_accounts_index",
             "return_to": "https://www.pixiv.net/"
         }
-        self.request("https://accounts.pixiv.net/api/login?lang=zh",
-                     'post', **{'data': data})
+        res = self.http.client.post("https://accounts.pixiv.net/api/login?lang=zh",
+                                    data=data)
+        return res
 
     def user_detail(self, user_id: int | str):
         """
@@ -151,7 +202,7 @@ class Pixiv:
 
         return r.body
 
-    def work_follow(self, page: int | str = 1, mode="all"):
+    def bookmark_new_illust(self, page: int | str = 1, mode="all"):
         """
         关注用户的新作  https://www.pixiv.net/bookmark_new_illust.php
         :param page: 分页
@@ -305,13 +356,69 @@ class Pixiv:
         r = self.request(url, "GET", **{'params': params})
         return r.body
 
-    def search_user(self, word: str):
+    def search_user(self, word: str, page=1, is_all=False, is_same=False):
         """
-        搜索用户 TODO
-        :param word:
+        搜索用户
+        :param word: 搜索的名称
+        :param page: 分页
+        :param is_all: False 全部  True 投稿作品的用户
+        :param is_same: True 完全一致  False 部分一致
         :return:
         """
-        pass
+        url = "%s/search_user.php" % self.hosts
+        params = {
+            "s_mode": 's_usr',
+            'nick': word,
+        }
+
+        if is_same:
+            params['nick_mf'] = 1
+
+        if page > 1:
+            params['p'] = page
+            params['comment'] = ''
+
+        if is_all:
+            params['i'] = 0
+
+        self.http.headers = {
+            'User-Agent': _HEADERS['User-Agent'],
+            'Cookie': _HEADERS['Cookie'],
+        }
+        html = self.http.request(url, "GET", **{'params': params})
+        res = {'users': {}}
+        soup = BeautifulSoup(html.text, 'html.parser')
+        res['page_total'] = re.search(r'\d+', soup.find('span', class_='count-badge').text).group(0)
+        lis = soup.find_all('li', class_='user-recommendation-item')
+        for li in lis:
+            href = li.find('a').get('href')
+            user_id = re.search(r'/users/(\d+)', href).group(1)
+            count = 0
+            if li.find('dl').find('dd'):
+                count = li.find('dl').find('dd').find('a').text
+            user = {
+                'id': user_id,
+                'avatar': li.find('a').get('data-src'),
+                'name': li.find('h1').find('a').text,
+                'count': count,
+                'introduction': li.find('p').text,
+                'images': []
+            }
+
+            images = {}
+            ul = li.find('ul', class_='images')
+            if ul:
+                arr = ul.find_all('li')
+                for v in arr:
+                    images['url'] = v.get('data-src')
+                    images['count'] = 1
+                    div = v.find('div', class_='page-count')
+                    if div:
+                        images['count'] = div.find('span').text
+
+            res['users'][user_id] = user
+
+        return res
 
     def search(self, word: str, url_type: _SEARCH_URL_TYPE = 'artworks', params: dict = None):
         """
@@ -483,110 +590,74 @@ class Pixiv:
         r = self.request(url, "GET", **{'params': params})
         return r.body
 
-    def download(self,
-                 urls: str | list,
-                 path: str = os.getcwd(),
-                 prefix: str = '',
-                 fname: str = '',
-                 ):
-        threads = []
-        if isinstance(urls, str):
-            urls = [urls]
-
-        for url in urls:
-            name = os.path.basename(url)
-            if fname:
-                if fname.find('.') != -1:
-                    name = fname
-                else:
-                    suffix = os.path.splitext(name)[-1]
-                    name = f"{fname}{suffix}"
-            if prefix:
-                name = f"{prefix}{name}"
-
-            save_path = os.path.join(path, name)
-            if os.path.exists(save_path):
-                continue
-
-            thread = threading.Thread(target=self.http.download,
-                                      args=(url, save_path))
-            threads.append(thread)
-            thread.start()
-
-        for thread in threads:
-            thread.join()
-
-    def make_filename(self, illust: dict) -> str:
-        if illust.type == 'illust':
-            name_rule = config['Settings']['illust_file_name']
-        elif illust.type == 'manga':
-            if illust.seriesNavData:
-                name_rule = config['Settings']['series_manga_file_name']
-            else:
-                name_rule = config['Settings']['manga_file_name']
-
     def download_work(self, illust):
         """
         下载作品 必须是 work_detail 返回的数据
-        :param illust: work_detail返回的值
+        :param illust: self.work_detail返回的值
         :return:
         """
         title = illust.title
-        author = illust.userName
-        work_dir = os.path.join(self.root, author)
-        if illust.type == 'manga' and illust.seriesNavData:
-            work_dir = os.path.join(work_dir, illust.seriesNavData.title)
-
-        if not os.path.exists(work_dir):
-            os.makedirs(work_dir)
-
+        author = remove_emojis(illust.userName)
         logger.info(f"当前作品名称: {title}")
         # 有些系统不支持
-        title = remove_emojis(title)
-        title = filter_file_name(title)
+        title = filter_file_name(remove_emojis(title))
         if illust.pageCount == 1 and illust.type != 'ugoira':
-            if work_exists(illust.id, f"{title}{illust.id}"):
+            filename = make_filename(illust, illust.urls.original)
+            save_path = os.path.join(self.root, filename)
+            name = os.path.basename(save_path)
+            path = os.path.dirname(save_path)
+            if work_exists(illust.id, os.path.splitext(name)[0]) and not bool(config['Settings']['is_repeat']):
                 logger.info(f"插画[{title}]已存在.")
                 return
-            self.download(illust.urls.original, work_dir, prefix=title)
 
-            if not pixiv_id_exists(illust.id):
-                name = os.path.basename(illust.urls.original)
-                insert_data(illust.id, f"{title}{name}", illust.userName, illust.userId, illust.type,
-                            os.path.join(work_dir, f"{title}{name}"))
+            if not os.path.exists(path):
+                os.makedirs(path)
 
-            logger.info("单图作品下载完毕.")
-
+            self.http.download(illust.urls.original, save_path)
+            insert_data(illust.id, name, author, illust.userId, illust.type, save_path)
+            logger.info(f"单图作品下载完毕 saved: {save_path}")
         elif illust.pageCount > 1:
-            image_urls = [
-                page.urls.original
-                for page in illust.urls
-            ]
+            threads = []
+            for url in illust.urls:
+                filename = make_filename(illust, url.urls.original)
+                save_path = os.path.join(self.root, filename)
+                name = os.path.basename(save_path)
+                if work_exists(illust.id, os.path.splitext(name)[0]) and not bool(config['Settings']['is_repeat']):
+                    logger.info(f"多图[{filename}]已存在")
+                    continue
 
-            if illust.type == 'manga' and illust.seriesNavData:
-                title = f"#{illust.seriesNavData.order} {title}"
+                path = os.path.dirname(save_path)
+                if not os.path.exists(path):
+                    os.makedirs(path)
 
-            if work_exists(illust.id, f"{title}{illust.id}"):
-                logger.info(f"多图[{title}]已存在")
+                insert_data(illust.id, name, author, illust.userId, illust.type, save_path)
+                thread = threading.Thread(target=self.http.download,
+                                          args=(url.urls.original, save_path))
+                threads.append(thread)
+                thread.start()
 
-            self.download(image_urls, prefix=title, path=work_dir)
+            for thread in threads:
+                thread.join()
 
-            if not pixiv_id_exists(illust.id):
-                name = os.path.basename(image_urls[0])
-                insert_data(illust.id, f"{title}{name}", illust.userName, illust.userId, illust.type,
-                            os.path.join(work_dir, f"{title}{name}"))
-
-            logger.info("多图作品下载完毕.")
+            logger.info(f"多图作品下载完毕.")
         elif illust.pageCount == 1 and illust.type == 'ugoira':
             logger.info("发现动图开始下载...")
-            if work_exists(illust.id, f"{title}{illust.id}"):
+            filename = make_filename(illust)
+            save_path = os.path.join(self.root, filename)
+            name = os.path.basename(save_path)
+            if work_exists(illust.id, os.path.splitext(name)[0]) and not bool(config['Settings']['is_repeat']):
                 logger.info(f"动图[{title}]已存在")
+                return
+
+            path = os.path.dirname(save_path)
+            if not os.path.exists(path):
+                os.makedirs(path)
 
             ugoira = self.ugoira_metadata(illust.id)
-            file_name = illust.id + 'ugoira_tmp.zip'
-            extract_path = f"ugoira_tmp{illust.id}"
-            self.download(ugoira.originalSrc, fname=file_name)
-            f = zipfile.ZipFile(file_name, 'r')
+            tmp_path = os.path.join(os.getcwd(), illust.id + 'ugoira_tmp.zip')
+            extract_path = os.path.join(os.getcwd(), f"ugoira_tmp{illust.id}")
+            self.http.download(ugoira.originalSrc, tmp_path)
+            f = zipfile.ZipFile(tmp_path, 'r')
             if not os.path.exists(extract_path):
                 os.makedirs(extract_path)
 
@@ -594,92 +665,155 @@ class Pixiv:
                 f.extract(file, extract_path)
             f.close()
 
-            save_name = os.path.join(work_dir, f"{title}{illust.id}.gif")
-            duration = [item['delay'] / 1000.0 for item in ugoira.frames]
+            files = os.listdir(extract_path)
+            duration = [item['delay'] / 1000.0 for item in ugoira.frames if item['file'] in files]
             try:
-                create_gif(extract_path, save_name, duration)
-            except Exception:
-                insert_error_data(ugoira.originalSrc, save_name, str(traceback.format_exc()))
+                create_gif(extract_path, save_path, duration)
+            except:
+                insert_error_data(ugoira.originalSrc, save_path, str(traceback.format_exc()))
                 logger.error(f"生成动图失败,已记录当前数据 \n error: {traceback.format_exc()}")
                 shutil.rmtree(extract_path)
-                os.remove(file_name)
+                os.remove(tmp_path)
                 return
             shutil.rmtree(extract_path)
-            os.remove(file_name)
-            if not pixiv_id_exists(illust.id):
-                insert_data(illust.id, f"{title}{illust.id}", illust.userName, illust.userId, illust.type,
-                            save_name)
-
-            logger.info("动图作品下载完毕.")
+            os.remove(tmp_path)
+            insert_data(illust.id, name, author, illust.userId, illust.type, save_path)
+            logger.info(f"动图作品下载完毕 saved: {save_path}")
+        else:
+            logger.info("这是什么奇怪的文件 (✖﹏✖) 不会下载")
 
     def errors_download(self):
+        """
+        重新下载 因为各种异常没有成功下载的作品
+        :return:
+        """
         errors = query_all_errors()
         for err in errors:
             try:
-                self.download(err['url'], err['save_path'])
-                delete_error_by_id(err['id'])
-                name = os.path.basename(err['url'])
+                url = err[1]
+                suffix = os.path.splitext(url)[-1]
+                pixiv_id = re.search(r'(\d{5,})', url).group(1)
+                if suffix == '.zip':
+                    work = self.work_detail(pixiv_id)
+                    self.download_work(work)
+                else:
+                    self.http.download(url, err[2])
+
+                if not pixiv_id_exists(pixiv_id):
+                    work = self.work_detail(pixiv_id)
+                    insert_data(pixiv_id, work.title, work.userName, work.userId, work.type, err[2])
+
+                delete_error_by_id(err[0])
             except:
                 logger.error(traceback.format_exc())
                 continue
 
-    def download_user_following(self, skip_user: list = None):
+    def process_works(self, works):
+        for illust in works.values():
+            if self.sleep_counter >= int(config['Settings']['max_sleep_counter']):
+                time.sleep(int(config['Settings']['sleep']))
+                self.sleep_counter = 0
+
+            title = remove_emojis(illust.title)
+            if pixiv_id_exists(illust.id) and not bool(config['Settings']['is_repeat']):
+                logger.info(f"[{title}]已存在")
+                continue
+
+            work = self.work_detail(illust.id)
+            self.download_work(work)
+            self.sleep_counter += 1
+
+    def download_user_following(self):
         """
         下载关注的所有用户的所有作品
-        :param skip_user: 需要跳过的作者id
-        :param sleep:
-        :return:
         """
         logger.info('开始检查订阅内容')
         # 获取所有关注的用户
         res = self.user_following(0, 24)
         users = res.users
         limit = 24
-        # for offset in range(96, res.total, limit):
+
         for offset in range(24, res.total, limit):
             res = self.user_following(offset, limit)
             users.extend(res.users)
 
-        def process_works(works):
-            for illust in works.values():
-                if self.sleep_counter >= config['Settings']['max_sleep_counter']:
-                    time.sleep(config['Settings']['sleep'])
-                    self.sleep_counter = 0
-
-                title = remove_emojis(illust.title)
-                if work_exists(illust.id, f"{title}{illust.id}"):
-                    logger.info(f"[{title}]已存在")
-                    continue
-
-                work = self.work_detail(illust.id)
-                self.download_work(work)
-                self.sleep_counter += 1
-
         for user in users:
             logger.info(f"当前抓取作者: {user.userName}")
-            if user.userId in skip_user:
+            if is_skip_user(user.userId):
                 logger.info(f"[{user.userId}] 跳过")
                 continue
 
             # 用户所有作品
-            json_result = self.user_works(user.userId)
-            process_works(json_result['manga'])
-            process_works(json_result['illusts'])
+            self.download_user_works(user.userId)
+
+    def subscribing(self):
+        """
+        增量更新 从已关注的用户的新作 检查是否有没有下载的作品, 一直检查 直到遇到已下载的数据 才暂停
+        :return:
+        """
+        page = 1
+        while True:
+            works = self.bookmark_new_illust(page)
+            for illust in works['thumbnails']['illust']:
+                if is_skip_user(illust.userId):
+                    logger.info(f"[{illust.userId}] 跳过")
+                    continue
+
+                if work_exists(illust.id):
+                    logger.info("没有新的作品.")
+                    logger.info(f"更新订阅完成.")
+                    return
+
+                logger.info(f"发现新作品[{illust.title}], 开始下载...")
+                work = self.work_detail(illust.id)
+                self.download_work(work)
+                logger.info(f"[{illust.title}], 下载完成.")
+
+            page += 1
+
+    def download_user_works(self, user_id):
+        """
+        下载用户的所有作品
+        :param user_id:
+        :return:
+        """
+        works = self.user_works(user_id)
+        self.process_works(works['manga'])
+        self.process_works(works['illusts'])
+
+    def download_user_bookmarks_illust(self, tag='', restrict='show'):
+        first_page = self.user_bookmarks_illust(tag, restrict=restrict)
+        works = first_page.works
+        limit = 48
+        if first_page.total > 0:
+            for offset in range(48, first_page.total, limit):
+                page = self.user_bookmarks_illust(tag, offset, limit, restrict=restrict)
+                works.extend(page.works)
+
+            for work in works:
+                detail = self.work_detail(work.id)
+                self.download_work(detail)
 
 
 if __name__ == '__main__':
     pixiv = Pixiv()
-    pixiv.root = '/Users/mac/Desktop/pixiv'
+    pixiv.work_detail(86130791)
+    # res = re.search(r'(\d{5,})', 'https://i.pximg.net/img-original/img/2023/02/25/18/19/16/99831005_p67.jpg')
+    # print(res.group(1))
+    # pixiv.subscribing()
+    # pixiv.root = '/Users/mac/Desktop/pixiv'
     # work = pixiv.work_detail(115103841)
     # pixiv.download_work(work)
     # pixiv.make_filename(work)
 
     # res = pixiv.user_works(22950794)
     # 单个
-    # res = pixiv.work_detail(103449028)
+    # work = pixiv.work_detail(119800855)
     # print(res)
     # 多个图片
     # res = pixiv.work_detail(119467216)
+    # pixiv.download_work(work)
+
     # res = pixiv.user_detail(22950794)
     # res = pixiv.work_follow(2)
     # res = pixiv.user_bookmarks_illust()
