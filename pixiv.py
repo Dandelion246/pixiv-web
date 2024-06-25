@@ -70,11 +70,11 @@ class Pixiv:
         self.http.headers = _HEADERS
         self.version = 'f5f50bb540731f95e7b1eee0509ac311fd4e9525'
         self.root: str = config['Settings']['root']
-        if not _HEADERS['User']['cookies']:
+        if not _HEADERS['Cookie']:
             logger.error('请配置cookies')
             sys.exit()
 
-        if not _HEADERS['User']['user_id']:
+        if not _HEADERS['X-User-Id']:
             logger.error('请配置user_id')
             sys.exit()
 
