@@ -20,13 +20,13 @@
     p.set_proxy('http://127.0.0.1:1080')
     # 获取所有关注的用户的所有作品
     p.download_user_following()
-    # 清理各种异常的作品
+    # 重试下载因各种异常而失败的作品
     p.errors_download()
     # 订阅关注的用户的最新作品
     p.subscribing()
     # 下载用户所有作品
     p.download_user_works(62286279)
-    # 下载用户收藏的所有作品
+    # 下载收藏的所有作品
     p.download_user_bookmarks_illust()
     # 用户搜索
     p.search_user('666', is_all=True)

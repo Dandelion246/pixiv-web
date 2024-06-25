@@ -2,6 +2,7 @@ import json
 import os.path
 import re
 import shutil
+import sys
 import threading
 import time
 import traceback
@@ -62,22 +63,35 @@ def make_filename(illust: dict, url='') -> str:
 
 class Pixiv:
     def __init__(self) -> None:
+        self.sleep_counter = 0
         self.user_id = _HEADERS["X-User-Id"]
         self.hosts = "https://www.pixiv.net"
         self.http = HttpClient()
         self.http.headers = _HEADERS
         self.version = 'f5f50bb540731f95e7b1eee0509ac311fd4e9525'
         self.root: str = config['Settings']['root']
-        self.sleep_counter = 0
+        if not _HEADERS['User']['cookies']:
+            logger.error('请配置cookies')
+            sys.exit()
+
+        if not _HEADERS['User']['user_id']:
+            logger.error('请配置user_id')
+            sys.exit()
 
     def set_proxy(self, proxy_hosts: str = "http://127.0.0.1:1080"):
         self.http.set_proxy(proxy_hosts)
         return self
 
     def request(self, url: str, method: str = 'GET', **kwargs):
-        # TODO 未处理过度使用的情况
-        response = self.http.request(url, method, **kwargs)
-        return json.loads(response.text, object_hook=JsonDict)
+        try:
+            response = self.http.request(url, method, **kwargs)
+            return json.loads(response.text, object_hook=JsonDict)
+        except Exception as e:
+            if traceback.format_exc().find('Too Many Requests') != -1:
+                logger.info('pixiv 返回 Too Many Requests 休息200s')
+                time.sleep(int(config['Settings']['too_many_requests']))
+
+            raise e
 
     def login(self, email, password):
         # TODO 待完成
@@ -596,6 +610,11 @@ class Pixiv:
         :param illust: self.work_detail返回的值
         :return:
         """
+        if self.sleep_counter >= int(config['Settings']['max_sleep_counter']):
+            logger.info('开始休息 ₍˄·͈༝·͈˄₎◞ ̑̑')
+            time.sleep(int(config['Settings']['sleep']))
+            self.sleep_counter = 0
+
         title = illust.title
         author = remove_emojis(illust.userName)
         logger.info(f"当前作品名称: {title}")
@@ -604,33 +623,47 @@ class Pixiv:
         if illust.pageCount == 1 and illust.type != 'ugoira':
             filename = make_filename(illust, illust.urls.original)
             save_path = os.path.join(self.root, filename)
+            if os.path.exists(save_path):
+                logger.info(f"保存位置[{save_path}]已存在")
+                return
+
             name = os.path.basename(save_path)
             path = os.path.dirname(save_path)
             if work_exists(illust.id, os.path.splitext(name)[0]) and not bool(config['Settings']['is_repeat']):
                 logger.info(f"插画[{title}]已存在.")
                 return
 
-            if not os.path.exists(path):
-                os.makedirs(path)
-
+            os.makedirs(path, exist_ok=True)
             self.http.download(illust.urls.original, save_path)
-            insert_data(illust.id, name, author, illust.userId, illust.type, save_path)
+            if not pixiv_id_exists(illust.id):
+                insert_data(illust.id, name, author, illust.userId, illust.type, save_path)
+            self.sleep_counter += 1
             logger.info(f"单图作品下载完毕 saved: {save_path}")
         elif illust.pageCount > 1:
             threads = []
             for url in illust.urls:
+                if self.sleep_counter >= int(config['Settings']['max_sleep_counter']):
+                    logger.info('开始休息 ₍˄·͈༝·͈˄₎◞ ̑̑')
+                    time.sleep(int(config['Settings']['sleep']))
+                    self.sleep_counter = 0
+
                 filename = make_filename(illust, url.urls.original)
                 save_path = os.path.join(self.root, filename)
+                if os.path.exists(save_path):
+                    logger.info(f"保存位置[{save_path}]已存在")
+                    continue
+
                 name = os.path.basename(save_path)
                 if work_exists(illust.id, os.path.splitext(name)[0]) and not bool(config['Settings']['is_repeat']):
                     logger.info(f"多图[{filename}]已存在")
                     continue
 
                 path = os.path.dirname(save_path)
-                if not os.path.exists(path):
-                    os.makedirs(path)
+                os.makedirs(path, exist_ok=True)
+                if not pixiv_id_exists(illust.id):
+                    insert_data(illust.id, name, author, illust.userId, illust.type, save_path)
 
-                insert_data(illust.id, name, author, illust.userId, illust.type, save_path)
+                self.sleep_counter += 1
                 thread = threading.Thread(target=self.http.download,
                                           args=(url.urls.original, save_path))
                 threads.append(thread)
@@ -644,23 +677,23 @@ class Pixiv:
             logger.info("发现动图开始下载...")
             filename = make_filename(illust)
             save_path = os.path.join(self.root, filename)
+            if os.path.exists(save_path):
+                logger.info(f"保存位置[{save_path}]已存在")
+                return
+
             name = os.path.basename(save_path)
             if work_exists(illust.id, os.path.splitext(name)[0]) and not bool(config['Settings']['is_repeat']):
                 logger.info(f"动图[{title}]已存在")
                 return
 
             path = os.path.dirname(save_path)
-            if not os.path.exists(path):
-                os.makedirs(path)
-
+            os.makedirs(path, exist_ok=True)
             ugoira = self.ugoira_metadata(illust.id)
             tmp_path = os.path.join(os.getcwd(), illust.id + 'ugoira_tmp.zip')
             extract_path = os.path.join(os.getcwd(), f"ugoira_tmp{illust.id}")
+            os.makedirs(extract_path, exist_ok=True)
             self.http.download(ugoira.originalSrc, tmp_path)
             f = zipfile.ZipFile(tmp_path, 'r')
-            if not os.path.exists(extract_path):
-                os.makedirs(extract_path)
-
             for file in f.namelist():
                 f.extract(file, extract_path)
             f.close()
@@ -677,7 +710,10 @@ class Pixiv:
                 return
             shutil.rmtree(extract_path)
             os.remove(tmp_path)
-            insert_data(illust.id, name, author, illust.userId, illust.type, save_path)
+            if not pixiv_id_exists(illust.id):
+                insert_data(illust.id, name, author, illust.userId, illust.type, save_path)
+                
+            self.sleep_counter += 1
             logger.info(f"动图作品下载完毕 saved: {save_path}")
         else:
             logger.info("这是什么奇怪的文件 (✖﹏✖) 不会下载")
@@ -710,22 +746,21 @@ class Pixiv:
 
     def process_works(self, works):
         for illust in works.values():
-            if self.sleep_counter >= int(config['Settings']['max_sleep_counter']):
-                time.sleep(int(config['Settings']['sleep']))
-                self.sleep_counter = 0
-
             title = remove_emojis(illust.title)
             if pixiv_id_exists(illust.id) and not bool(config['Settings']['is_repeat']):
                 logger.info(f"[{title}]已存在")
                 continue
+            try:
+                work = self.work_detail(illust.id)
+                self.download_work(work)
+            except:
+                logger.error(traceback.format_exc())
+                continue
 
-            work = self.work_detail(illust.id)
-            self.download_work(work)
-            self.sleep_counter += 1
-
-    def download_user_following(self):
+    def download_user_following(self, start_user: int | str = ''):
         """
         下载关注的所有用户的所有作品
+        :param start_user: 可以指定从那个作者开始
         """
         logger.info('开始检查订阅内容')
         # 获取所有关注的用户
@@ -736,6 +771,18 @@ class Pixiv:
         for offset in range(24, res.total, limit):
             res = self.user_following(offset, limit)
             users.extend(res.users)
+
+        if start_user:
+            index = -1
+            for i, item in enumerate(users):
+                if isinstance(start_user, int) and int(item.get('userId')) == start_user:
+                    index = i
+                    break
+                if isinstance(start_user, str) and start_user in item.get('userName'):
+                    index = i
+                    break
+            if index != -1:
+                users = users[index:]
 
         for user in users:
             logger.info(f"当前抓取作者: {user.userName}")

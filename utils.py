@@ -1,6 +1,8 @@
 import configparser
 import os
 import re
+import sys
+
 import emoji
 from logger import logger
 from moviepy.editor import ImageSequenceClip
@@ -31,12 +33,14 @@ if not os.path.exists(config_path):
         'manga_file_name': '{user}/{title}{id}',
         'series_manga_file_name': '{user}/{series_title}/#{series_order} {title}{id}',
         'skip_user': '',
+        'too_many_requests': '200',
     }
 
     with open(config_path, 'w') as configfile:
         c.write(configfile)
 
     logger.info('配置文件已生成, 请配置后重些运行.')
+    sys.exit()
 
 logger.info('加载配置文件')
 config = configparser.RawConfigParser()

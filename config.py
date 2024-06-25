@@ -75,6 +75,13 @@ _TYPE_DICT = {
     '2': 'ugoira',
 }
 
+_MENU_DICT = {
+    '1': '获取所有关注的用户的所有作品',
+    '2': '订阅关注的用户的最新作品',
+    '3': '下载用户所有作品',
+    '4': '下载收藏的所有作品',
+    '5': '重试下载因各种异常而失败的作品',
+}
 
 class JsonDict(dict):  # type: ignore[type-arg]
     """general json object that allows attributes to be bound to and also behaves like a dict"""

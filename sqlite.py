@@ -104,6 +104,15 @@ def delete_by_id(id):
     conn.commit()
 
 
+def get_error_count():
+    cursor = conn.cursor()
+    cursor.execute('SELECT COUNT(*) FROM error;')
+    conn.commit()
+    row_count = cursor.fetchone()[0]
+    cursor.close()
+    return row_count
+
+
 def delete_error_by_id(id):
     cursor = conn.cursor()
     cursor.execute('DELETE FROM error WHERE id = ?', (id,))
@@ -113,8 +122,9 @@ def delete_error_by_id(id):
 # 示例使用
 if __name__ == "__main__":
     try:
-        errors = query_all_errors()
-        print(errors)
+        # errors = query_all_errors()
+        count = get_error_count()
+        print(count)
         # print(work_exists('22222', '(C101) [八百萬堂 (AkiFn)] 誰も知らない夜 (オリジナル)'))
         # print(work_exists('110123836'))
         # 创建表
