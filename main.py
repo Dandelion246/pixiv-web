@@ -4,7 +4,7 @@ import time
 
 from logger import logger
 from pixiv import Pixiv
-from config import _MENU_DICT
+from config import MENU_DICT
 from sqlite import get_error_count
 
 if __name__ == '__main__':
@@ -39,7 +39,7 @@ if __name__ == '__main__':
     else:
         os.system('clear')
 
-    logger.debug(f'当前模式：{_MENU_DICT[t]}')
+    logger.debug(f'当前模式：{MENU_DICT[t]}')
     if t == '1':
         user = input('可以指定从哪个作者开始(ID或者名称)：')
         if user:

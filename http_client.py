@@ -8,6 +8,7 @@ from tenacity import retry, stop_after_attempt, wait_fixed
 from logger import logger
 from config import MAX_CONCURRENT_THREADS, STOP_MAX_ATTEMPT_NUMBER, WAIT_FIXED
 from sqlite import insert_error_data
+import config
 import traceback
 
 thread_semaphore = threading.Semaphore(MAX_CONCURRENT_THREADS)
@@ -77,7 +78,9 @@ class HttpClient:
             block_size = 1024  # 1 KB
             start_time = time.time()
             downloaded_size = 0
+            config.sleep_counter += 1
             if total_size == 0:
+                config.sleep_counter += 20
                 raise Exception(f"{download_url}: total_size = 0")
 
             total_mb = total_size / (1024 * 1024)
@@ -119,9 +122,9 @@ if __name__ == '__main__':
     # tests
     h = HttpClient()
     h.set_proxy('http://localhost:1087')
-    h.download('https://i.pximg.net/img-original/img/2024/06/17/18/24/53/119725660_p0.png', 'tmp.png')
+    # h.download('https://i.pximg.net/img-original/img/2024/06/17/18/24/53/119725660_p0.png', 'tmp.png')
 
-    # r = h.request(
-    #     'https://www.pixiv.net/ajax/user/39805666/profile/top?lang=zh&version=f5f50bb540731f95e7b1eee0509ac311fd4e9525',
-    #     "GET")
-    # print(r.json())
+    r = h.request(
+        'https://www.pixiv.net/ajax/user/39805666/profile/top?lang=zh&version=f5f50bb540731f95e7b1eee0509ac311fd4e9525',
+        "GET")
+    print(r.json())

@@ -7,44 +7,44 @@ import emoji
 from logger import logger
 from moviepy.editor import ImageSequenceClip
 
-current_dir = os.path.dirname(os.path.abspath(__file__))
-config_path = os.path.join(current_dir, 'config.ini')
-if not os.path.exists(config_path):
-    c = configparser.ConfigParser()
-    c['User'] = {
-        'cookies': '',
-        'user_id': ''
-    }
 
-    c['Network'] = {
-        'use_proxy': '',
-        'max_concurrent_threads': '5',
-        'stop_max_attempt_number': '2',
-        'wait_fixed': '2'
-    }
+def init_config():
+    current_dir = os.path.dirname(os.path.abspath(__file__))
+    config_path = os.path.join(current_dir, 'config.ini')
+    if not os.path.exists(config_path):
+        c = configparser.ConfigParser()
+        c['User'] = {
+            'cookies': '',
+            'user_id': ''
+        }
 
-    c['Settings'] = {
-        'root': os.getcwd(),
-        'db_path': os.path.join(os.getcwd(), 'pixiv.db'),
-        'max_sleep_counter': '120',
-        'sleep': '60',
-        'is_repeat': '',
-        'illust_file_name': '{user}/{title}{id}',
-        'manga_file_name': '{user}/{title}{id}',
-        'series_manga_file_name': '{user}/{series_title}/#{series_order} {title}{id}',
-        'skip_user': '',
-        'too_many_requests': '200',
-    }
+        c['Network'] = {
+            'use_proxy': '',
+            'max_concurrent_threads': '5',
+            'stop_max_attempt_number': '2',
+            'wait_fixed': '2'
+        }
 
-    with open(config_path, 'w') as configfile:
-        c.write(configfile)
+        c['Settings'] = {
+            'root': os.getcwd(),
+            'db_path': os.path.join(os.getcwd(), 'pixiv.db'),
+            'max_sleep_counter': '120',
+            'sleep': '60',
+            'is_repeat': '',
+            'illust_file_name': '{user}/{title}{id}',
+            'manga_file_name': '{user}/{title}{id}',
+            'series_manga_file_name': '{user}/{series_title}/#{series_order} {title}{id}',
+            'skip_user': '',
+            'too_many_requests': '200',
+        }
 
-    logger.info('配置文件已生成, 请配置后重些运行.')
-    sys.exit()
+        with open(config_path, 'w') as configfile:
+            c.write(configfile)
 
-logger.info('加载配置文件')
-config = configparser.RawConfigParser()
-config.read(config_path)
+        logger.info('配置文件已生成, 请配置后重些运行.')
+        sys.exit()
+
+    return config_path
 
 
 def remove_emojis(text):
@@ -54,7 +54,7 @@ def remove_emojis(text):
 
 
 def filter_file_name(input_string):
-    return re.sub('[\/:*?"<>|]', '-', input_string)
+    return re.sub(r'[/:*?"<>|]', '-', input_string)
 
 
 def create_gif(image_folder, output_file, frame_duration=None):
