@@ -9,7 +9,13 @@ from moviepy.editor import ImageSequenceClip
 
 
 def init_config():
-    current_dir = os.path.dirname(os.path.abspath(__file__))
+    if getattr(sys, 'frozen', False):
+        current_dir = os.path.dirname(sys.executable)
+    elif __file__:
+        current_dir = os.path.dirname(__file__)
+    else:
+        current_dir = os.getcwd()
+
     config_path = os.path.join(current_dir, 'config.ini')
     if not os.path.exists(config_path):
         c = configparser.ConfigParser()
@@ -36,12 +42,13 @@ def init_config():
             'series_manga_file_name': '{user}/{series_title}/#{series_order} {title}{id}',
             'skip_user': '',
             'too_many_requests': '200',
+            'is_filter_name': 'yes',
         }
 
         with open(config_path, 'w') as configfile:
             c.write(configfile)
 
-        logger.info('配置文件已生成, 请配置后重些运行.')
+        logger.info(f"配置文件[{config_path}]已生成, 请配置后重些运行.")
         sys.exit()
 
     return config_path
@@ -54,7 +61,14 @@ def remove_emojis(text):
 
 
 def filter_file_name(input_string):
-    return re.sub(r'[/:*?"<>|]', '-', input_string)
+    def replace_char(char):
+        if char in r'\\:*?"<>|':  # 使用反斜杠来转义反斜杠本身
+            return '-'
+        elif char == '/' and ord(char) == 0x002F:  # 标准斜杠
+            return '-'
+        return char
+
+    return ''.join(replace_char(char) for char in input_string)
 
 
 def create_gif(image_folder, output_file, frame_duration=None):
@@ -74,3 +88,6 @@ def create_gif(image_folder, output_file, frame_duration=None):
         images = [Image.open(file) for file in image_files]
         images[0].save(output_file, save_all=True, append_images=images[1:], duration=100, loop=0)
 
+
+if __name__ == '__main__':
+    print(filter_file_name('トプ/topu'))

@@ -6,6 +6,7 @@ import traceback
 import zipfile
 from datetime import datetime
 
+import unicodedata
 from bs4 import BeautifulSoup
 from tenacity import retry, stop_after_attempt
 
@@ -626,11 +627,15 @@ class Pixiv:
             time.sleep(int(self.config('Settings', 'sleep')))
             config.sleep_counter = 0
 
-        title = illust.title
-        author = remove_emojis(illust.userName)
+        title = unicodedata.normalize('NFC', illust.title)
+        author = unicodedata.normalize('NFC', illust.userName)
+        author = author.split('@')[0]
+        if self.config('Settings', 'is_filter_name'):
+            # 有些系统不支持
+            author = remove_emojis(author)
+            title = filter_file_name(remove_emojis(title))
+
         logger.info(f"当前作品名称: {title}")
-        # 有些系统不支持
-        title = filter_file_name(remove_emojis(title))
         if illust.pageCount == 1 and illust.type != 'ugoira':
             config.sleep_counter += 1
             filename = self.make_filename(illust, illust.urls.original)
