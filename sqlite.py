@@ -1,8 +1,7 @@
 import sqlite3
 import time
-import utils
 
-db_name = '/Users/mac/Desktop/pixiv/pixiv.db'
+db_name = 'pixiv.db'
 conn = sqlite3.connect(db_name, check_same_thread=False)
 # conn = sqlite3.connect(src.config.get('Settings', 'db_path'))
 
@@ -83,24 +82,9 @@ def pixiv_id_exists(pixiv_id):
     return cursor.fetchone() is not None
 
 
-def work_exists(pixiv_id, title: str = ''):
+def delete_by_id(_id):
     cursor = conn.cursor()
-
-    sql = 'SELECT count(*) FROM pixiv WHERE pixiv_id = ?'
-    params = (pixiv_id,)
-
-    if title:
-        title = title.replace('%', '%%')
-        sql += ' OR name LIKE ?'
-        params = (pixiv_id, f'%{title}%')
-
-    cursor.execute(sql, params)
-    return bool(cursor.fetchone()[0])
-
-
-def delete_by_id(id):
-    cursor = conn.cursor()
-    cursor.execute('DELETE FROM pixiv WHERE id = ?', (id,))
+    cursor.execute('DELETE FROM pixiv WHERE id = ?', (_id,))
     conn.commit()
 
 
@@ -113,9 +97,9 @@ def get_error_count():
     return row_count
 
 
-def delete_error_by_id(id):
+def delete_error_by_id(_id):
     cursor = conn.cursor()
-    cursor.execute('DELETE FROM error WHERE id = ?', (id,))
+    cursor.execute('DELETE FROM error WHERE id = ?', (_id,))
     conn.commit()
 
 

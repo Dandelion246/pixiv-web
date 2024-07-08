@@ -5,51 +5,54 @@
 1.  安装 python 3 (最好大于3.7以上)
 2.  下载或者clone最新版本的源代码
 3.  在项目根目录 安装依赖 `pip install -r requirements.txt`
-4.  运行 `python main.py ` 首次运行会在目录下生成config.ini 文件
-5.  配置config.ini  需要从 https://www.pixiv.net 获取 cookie 和 id 教程如下:
-   - 在登录的情况下进入 pixiv 首页 点击自己头像
-   - 点击鼠标右键-> 检查 或者 按下键盘 F12 然后 -> 点击网络(Network) 刷新界面
-   - 点击 Fetch/XHR 找个有cookie 的链接 然后复制 cookie 到配置文件
-   - 查看网页url获取 自身id 填入config.ini
+4.  运行 `python main.py `
+5.  如果无法登录的话可以手动配置token 教程如下:
+   - 在登录的情况下进入 pixiv 任意界面
+   - 找到如下图的token 复制到config.ini文件的User token中
    - ![img](images/2416710515.png)
 
 ## Example:
 > 下载总有失败的时候 失败的记录会存入数据库 调用 errors_download 重新下载
 ```python
-    p = Pixiv()
-    p.set_proxy('http://127.0.0.1:1080')
-    # 获取所有关注的用户的所有作品
-    p.download_user_following()
-    # 重试下载因各种异常而失败的作品
-    p.errors_download()
-    # 订阅关注的用户的最新作品
-    p.subscribing()
-    # 下载用户所有作品
-    p.download_user_works(62286279)
-    # 下载收藏的所有作品
-    p.download_user_bookmarks_illust()
-    # 用户搜索
-    p.search_user('666', is_all=True)
-    # 搜索 水着  json_result.illustManga.data
-    json_result = p.search('水着')
-    print(json_result.illustManga.data)
-    # 关注用户的新作
-    result = p.bookmark_new_illust()
-    print(result['thumbnails']['illust'])
-    # 排名榜 今日r18 的插画 每次返回50条 可以使用返回的 'rank_total' 进行分页获取
-    res = p.illust_ranking('daily_r18', 'illust')
-    print(res.contents)
-    # 过取几天的搜索
-    res = p.illust_ranking('daily', 'manga', '20240621')
-    print(res.contents)
+from pixiv import Pixiv
+
+p = Pixiv()
+# 下载单个作品
+p.work_detail(10000022).download()
+p.work_detail('https://www.pixiv.net/artworks/10000022').download()
+
+p.set_proxy('http://127.0.0.1:1080')
+# 获取所有关注的用户的所有作品
+p.download_user_following()
+# 重试下载因各种异常而失败的作品
+p.errors_download()
+# 订阅关注的用户的最新作品
+p.subscribing()
+# 下载用户所有作品
+p.download_user_works(62286279)
+# 下载收藏的所有作品
+p.download_user_bookmarks_illust()
+# 用户搜索
+p.search_user('666', is_all=True)
+# 搜索 水着  json_result.illustManga.data
+json_result = p.search('水着')
+print(json_result.illustManga.data)
+# 关注用户的新作
+result = p.bookmark_new_illust()
+print(result['thumbnails']['illust'])
+# 排名榜 今日r18 的插画 每次返回50条 可以使用返回的 'rank_total' 进行分页获取
+res = p.illust_ranking('daily_r18', 'illust')
+print(res.contents)
+# 过取几天的搜索
+res = p.illust_ranking('daily', 'manga', '20240621')
+print(res.contents)
 ```
 
 ## config.ini说明
 ***
-```python
+```yaml
 [User]
-cookies = 
-user_id =
+token = 
 
 [Network]
 # 用户的代理 默认不启用
@@ -58,7 +61,7 @@ use_proxy =
 max_concurrent_threads = 5
 # 失败了重试几次?
 stop_max_attempt_number = 2
-# 重试间隔n秒
+# 重试间隔?秒
 wait_fixed = 2
 
 [Settings]
@@ -68,16 +71,18 @@ root =
 db_path = 
 # 连续下载阈值
 max_sleep_counter = 120
-# 连续下载后休眠多少秒
+# 连续下载后休眠?秒
 sleep = 60
-# 是否覆盖下载 默认为空 不重复下载
-is_repeat = 
+# 是否覆盖下载 默认False 不覆盖
+is_repeat = False
 # 文件名格式 具体有哪些 继续往下看
 illust_file_name = {user}/{title}{id}
 manga_file_name = {user}/{title}{id}
 series_manga_file_name = {user}/{series_title}/#{series_order} {title}{id}
 # 不想下载的用户id 多个,分割
 skip_user = 
+# 是否过滤名称中的特殊字符
+is_filter_name = yes
 
 ```
 

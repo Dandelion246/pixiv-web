@@ -1,62 +1,20 @@
-import configparser
 import os
 import re
-import sys
+import time
+from datetime import datetime
 
 import emoji
+import unicodedata
+from config import c4g
 from logger import logger
 from moviepy.editor import ImageSequenceClip
 
 
-def init_config():
-    if getattr(sys, 'frozen', False):
-        current_dir = os.path.dirname(sys.executable)
-    elif __file__:
-        current_dir = os.path.dirname(__file__)
-    else:
-        current_dir = os.getcwd()
-
-    config_path = os.path.join(current_dir, 'config.ini')
-    if not os.path.exists(config_path):
-        c = configparser.ConfigParser()
-        c['User'] = {
-            'cookies': '',
-            'user_id': ''
-        }
-
-        c['Network'] = {
-            'use_proxy': '',
-            'max_concurrent_threads': '5',
-            'stop_max_attempt_number': '2',
-            'wait_fixed': '2'
-        }
-
-        c['Settings'] = {
-            'root': os.getcwd(),
-            'db_path': os.path.join(os.getcwd(), 'pixiv.db'),
-            'max_sleep_counter': '120',
-            'sleep': '60',
-            'is_repeat': '',
-            'illust_file_name': '{user}/{title}{id}',
-            'manga_file_name': '{user}/{title}{id}',
-            'series_manga_file_name': '{user}/{series_title}/#{series_order} {title}{id}',
-            'skip_user': '',
-            'too_many_requests': '200',
-            'is_filter_name': 'yes',
-        }
-
-        with open(config_path, 'w') as configfile:
-            c.write(configfile)
-
-        logger.info(f"配置文件[{config_path}]已生成, 请配置后重些运行.")
-        sys.exit()
-
-    return config_path
-
-
 def remove_emojis(text):
     # 使用 emoji 库将文本中的表情符号替换为空字符串
-    text = emoji.replace_emoji(text, replace=' ')
+    text = emoji.replace_emoji(text, replace='')
+    if len(text) == 0:
+        text = '0emoji'
     return text
 
 
@@ -68,7 +26,7 @@ def filter_file_name(input_string):
             return '-'
         return char
 
-    return ''.join(replace_char(char) for char in input_string)
+    return (''.join(replace_char(char) for char in input_string)).strip()
 
 
 def create_gif(image_folder, output_file, frame_duration=None):
@@ -89,5 +47,69 @@ def create_gif(image_folder, output_file, frame_duration=None):
         images[0].save(output_file, save_all=True, append_images=images[1:], duration=100, loop=0)
 
 
+def is_skip_user(user_id: int | str) -> bool:
+    return str(user_id) in [num.strip() for num in c4g.read('Settings', 'skip_user').split(',')]
+
+
+def make_filename(illust: dict, url='') -> str:
+    name_rule = ''
+    res = ''
+    name_dict = {
+        'id': os.path.basename(url) if url else '',
+        'user': unicodedata.normalize('NFC', filter_file_name(remove_emojis(illust['userName']))),
+        'user_id': illust['userId'],
+        'title': unicodedata.normalize('NFC', filter_file_name(remove_emojis(illust['title']))),
+        'page_title': unicodedata.normalize('NFC', filter_file_name(remove_emojis(illust['alt']))),
+        'type': illust['type'],
+        'id_num': illust['id'],
+        'date': datetime.fromisoformat(illust['createDate']).strftime("%Y-%m-%d"),
+        'upload_date': datetime.fromisoformat(illust['uploadDate']).strftime("%Y-%m-%d"),
+        'bmk': illust['bookmarkCount'],
+        'like': illust['likeCount'],
+        'bmk_id': illust['bookmarkData']['id'] if illust['bookmarkData'] else '',
+        'view': illust['viewCount'],
+        'series_title': unicodedata.normalize('NFC', filter_file_name(remove_emojis(illust['seriesNavData']['title']))) if illust['seriesNavData'] else '',
+        'series_order': illust['seriesNavData']['order'] if illust['seriesNavData'] else '',
+        'series_id': illust['seriesNavData']['seriesId'] if illust['seriesNavData'] else '',
+        'AI': 'AI' if int(illust['aiType']) == 1 else '',
+        'tags': ",".join([item["tag"] for item in illust['tags']['tags']]),
+    }
+
+    if illust['type'] in ['illust', 'ugoira']:
+        name_rule = c4g.read('Settings', 'illust_file_name')
+        if illust['type'] == 'ugoira':
+            name_dict['id'] = f"{name_dict['id_num']}.gif"
+    elif illust['type'] == 'manga':
+        if illust['seriesNavData']:
+            name_rule = c4g.read('Settings', 'series_manga_file_name')
+        else:
+            name_rule = c4g.read('Settings', 'manga_file_name')
+
+    if name_rule:
+        res = name_rule.format(**name_dict)
+
+    return res
+
+
+def is_sleep():
+    if c4g.sleep_counter >= int(c4g.read('Settings', 'max_sleep_counter')):
+        logger.info("\n开始休息 (￣ρ￣)..zzZZ\n")
+        time.sleep(int(c4g.read('Settings', 'sleep')))
+        c4g.sleep_counter = 0
+
+
+def is_url(string):
+    url_pattern = re.compile(
+        r'^(https?|ftp)://'  # 协议部分
+        r'(?:(?:[A-Z0-9](?:[A-Z0-9-]{0,61}[A-Z0-9])?\.)+(?:[A-Z]{2,6}\.?|[A-Z0-9-]{2,}\.?)|'  # 域名部分
+        r'localhost|'  # 本地主机
+        r'\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}|'  # 或者 IPv4 地址
+        r'\[?[A-F0-9]*:[A-F0-9:]+\]?)'  # 或者 IPv6 地址
+        r'(?::\d+)?'  # 端口号（可选）
+        r'(?:/?|[/?]\S+)$', re.IGNORECASE)  # 路径部分
+    return re.match(url_pattern, string) is not None
+
+
 if __name__ == '__main__':
-    print(filter_file_name('トプ/topu'))
+    res = filter_file_name('PICKUP GIRL COMIC ')
+    print(res)

@@ -6,3 +6,5 @@ requests~=2.32.3
 cloudscraper~=1.2.71
 tenacity~=8.4.1
 beautifulsoup4~=4.12.3
+typing_extensions~=4.12.2
+pywebview~=5.1

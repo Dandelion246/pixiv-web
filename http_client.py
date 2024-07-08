@@ -4,14 +4,13 @@ import threading
 import time
 import cloudscraper
 import requests
-from tenacity import retry, stop_after_attempt, wait_fixed
+from tenacity import retry, stop_after_attempt, wait_fixed, retry_if_exception
 from logger import logger
-from config import MAX_CONCURRENT_THREADS, STOP_MAX_ATTEMPT_NUMBER, WAIT_FIXED
+from config import c4g
 from sqlite import insert_error_data
-import config
 import traceback
 
-thread_semaphore = threading.Semaphore(MAX_CONCURRENT_THREADS)
+thread_semaphore = threading.Semaphore(c4g.max_concurrent_threads)
 
 
 def failure_function(retry_state):
@@ -26,10 +25,20 @@ def failure_function(retry_state):
     insert_error_data(url, sava_path, err)
 
 
+def should_retry(retry_state):
+    # 检查最近一次调用是否失败
+    response = retry_state.response
+    if response is not None and response.status_code == 401:
+        logger.error('401错误不重试')
+        return False
+
+    return True
+
+
 class HttpClient:
-    def __init__(self):
-        self.proxies = None
-        self.headers = {}
+    def __init__(self, headers=None, proxies=None):
+        self.proxies = proxies
+        self.headers = headers
         self.client = cloudscraper.create_scraper()
 
     def set_proxy(self, url='http://localhost:1080'):
@@ -40,7 +49,10 @@ class HttpClient:
 
         return self
 
-    @retry(stop=stop_after_attempt(STOP_MAX_ATTEMPT_NUMBER), wait=wait_fixed(WAIT_FIXED))
+    @retry(stop=stop_after_attempt(c4g.stop_max_attempt_number),
+           wait=wait_fixed(c4g.wait_fixed),
+           retry=retry_if_exception(should_retry)
+           )
     def request(self, url: str, method: str = 'GET', **kwargs) -> requests.Response:
         """
         发送http请求
@@ -56,12 +68,12 @@ class HttpClient:
             response = getattr(self.client, method.lower())(url, proxies=self.proxies, **kwargs)
             response.raise_for_status()
             return response
-        except Exception as e:
-            logger.error(f"request 出现异常, 准备重试 Error:{traceback.format_exc()}")
+        except requests.exceptions.HTTPError as e:
+            logger.error(f"request 出现异常, 准备重试 Error:{e}")
             raise e
 
-    @retry(stop=stop_after_attempt(STOP_MAX_ATTEMPT_NUMBER),
-           wait=wait_fixed(WAIT_FIXED),
+    @retry(stop=stop_after_attempt(c4g.stop_max_attempt_number),
+           wait=wait_fixed(c4g.wait_fixed),
            retry_error_callback=failure_function
            )
     def download(self, download_url: str, save_path: str):
@@ -78,9 +90,9 @@ class HttpClient:
             block_size = 1024  # 1 KB
             start_time = time.time()
             downloaded_size = 0
-            config.sleep_counter += 1
+            c4g.sleep_counter += 1
             if total_size == 0:
-                config.sleep_counter += 20
+                c4g.sleep_counter += 20
                 raise Exception(f"{download_url}: total_size = 0")
 
             total_mb = total_size / (1024 * 1024)

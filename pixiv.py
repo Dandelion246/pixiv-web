@@ -1,43 +1,44 @@
 import json
 import shutil
+import sys
 import threading
-import time
 import traceback
 import zipfile
-from datetime import datetime
 
 import unicodedata
 from bs4 import BeautifulSoup
 from tenacity import retry, stop_after_attempt
 
-import config
-from config import *
+import re
+from const import *
 from http_client import HttpClient
-from sqlite import work_exists, pixiv_id_exists, insert_data, insert_error_data, query_all_errors, delete_error_by_id
+from sqlite import pixiv_id_exists, insert_data, insert_error_data, query_all_errors, delete_error_by_id
 from utils import *
 
 
 class Pixiv:
     def __init__(self) -> None:
-        self.conn = None
-        self.user_id = HEADERS["X-User-Id"]
-        self.hosts = "https://www.pixiv.net"
+        self.user_id: int | str = c4g.headers['X-User-Id']
+        self.hosts: str = "https://www.pixiv.net"
         self.http = HttpClient()
-        self.http.headers = HEADERS
         self.version = 'f5f50bb540731f95e7b1eee0509ac311fd4e9525'
-        self.config_path = init_config()
         logger.info('加载配置文件')
-        self.cp = configparser.RawConfigParser()
-        self.root: str = self.config('Settings', 'root')
-        if not HEADERS['Cookie']:
-            logger.error('请配置cookies')
+        self.root: str = c4g.root
+        self.download_list = []
+        self.illust = None
+        if not c4g.data.has_option('User', 'token') or not c4g.data['User']['token']:
+            logger.error('请先登录 或者配置config.ini User->token')
             sys.exit()
 
-        if not HEADERS['X-User-Id']:
-            logger.error('请配置user_id')
+        c4g.headers['Cookie'] = f"PHPSESSID={c4g.data['User']['token']}"
+        user_id = c4g.data['User']['token'].split('_')[0]
+        if not user_id.isdigit():
+            logger.error('User->token无效, 请重新配置')
             sys.exit()
 
-        if not os.path.isdir(self.config('Settings', 'root')):
+        c4g.headers['X-User-Id'] = user_id
+        self.http.headers = c4g.headers
+        if not os.path.isdir(c4g.root):
             logger.error('config.ini Settings->root 目录有问题')
             sys.exit()
 
@@ -45,53 +46,8 @@ class Pixiv:
         self.http.set_proxy(proxy_hosts)
         return self
 
-    def is_skip_user(self, user_id: int | str) -> bool:
-        return str(user_id) in [num.strip() for num in self.config('Settings', 'skip_user').split(',')]
-
-    def make_filename(self, illust: dict, url='') -> str:
-        name_rule = ''
-        res = ''
-        name_dict = {
-            'id': os.path.basename(url) if url else '',
-            'user': filter_file_name(remove_emojis(illust['userName'])),
-            'user_id': illust['userId'],
-            'title': filter_file_name(remove_emojis(illust['title'])),
-            'page_title': filter_file_name(remove_emojis(illust['alt'])),
-            'type': illust['type'],
-            'id_num': illust['id'],
-            'date': datetime.fromisoformat(illust['createDate']).strftime("%Y-%m-%d"),
-            'upload_date': datetime.fromisoformat(illust['uploadDate']).strftime("%Y-%m-%d"),
-            'bmk': illust['bookmarkCount'],
-            'like': illust['likeCount'],
-            'bmk_id': illust['bookmarkData']['id'] if illust['bookmarkData'] else '',
-            'view': illust['viewCount'],
-            'series_title': illust['seriesNavData']['title'] if illust['seriesNavData'] else '',
-            'series_order': illust['seriesNavData']['order'] if illust['seriesNavData'] else '',
-            'series_id': illust['seriesNavData']['seriesId'] if illust['seriesNavData'] else '',
-            'AI': 'AI' if int(illust['aiType']) == 1 else '',
-            'tags': ",".join([item["tag"] for item in illust['tags']['tags']]),
-        }
-
-        if illust['type'] in ['illust', 'ugoira']:
-            name_rule = self.config('Settings', 'illust_file_name')
-            if illust['type'] == 'ugoira':
-                name_dict['id'] = f"{name_dict['id_num']}.gif"
-        elif illust['type'] == 'manga':
-            if illust['seriesNavData']:
-                name_rule = self.config('Settings', 'series_manga_file_name')
-            else:
-                name_rule = self.config('Settings', 'manga_file_name')
-
-        if name_rule:
-            res = name_rule.format(**name_dict)
-
-        return res
-
-    def config(self, key, name):
-        self.cp.read(self.config_path)
-        value = self.cp.get(key, name)
-        self.cp.clear()
-        return value
+    def get(self):
+        return self.illust
 
     @retry(stop=stop_after_attempt(1))
     def request(self, url: str, method: str = 'GET', **kwargs):
@@ -100,34 +56,38 @@ class Pixiv:
             return json.loads(response.text, object_hook=JsonDict)
         except Exception as e:
             if traceback.format_exc().find('Too Many Requests') != -1:
-                logger.info("\npixiv 返回 Too Many Requests 休息200s (￣ρ￣)..zzZZ\n")
-                time.sleep(int(self.config('Settings', 'too_many_requests')))
+                s = int(c4g.read('Settings', 'too_many_requests'))
+                logger.info(f"\npixiv 返回 Too Many Requests 休息{s}s (￣ρ￣)..zzZZ\n")
+                time.sleep(s)
+                raise e
 
-            raise e
+            if traceback.format_exc().find('401 Client') != -1:
+                logger.error('401错误, 可能是登录过期或token无效')
+                sys.exit()
 
-    def login(self, email, password):
-        # TODO 待完成
-        # r = self.http.client.get(
-        #     "https://accounts.pixiv.net/login?lang=zh&source=pc&view_type=page&ref=wwwtop_accounts_index",
-        # )
-        #
-        # pattern = re.compile('<input type="hidden" name="post_key" value="(.*?)">', re.S)
-        # post_key = re.search(pattern, r.text).group(1)
-        data = {
-            "pixiv_id": email,
-            "password": password,
-            "captcha": "",
-            "g_recaptcha_response": "",
-            "post_key": '885d11c7fa8ec15d7fbc538518ab516a',
-            "source": "pc",
-            "ref": "wwwtop_accounts_index",
-            "return_to": "https://www.pixiv.net/"
-        }
-        res = self.http.client.post("https://accounts.pixiv.net/api/login?lang=zh",
-                                    data=data)
-        return res
+    # def login(self, email, password):
+    #     # TODO 待完成
+    #     # r = self.http.client.get(
+    #     #     "https://accounts.pixiv.net/login?lang=zh&source=pc&view_type=page&ref=wwwtop_accounts_index",
+    #     # )
+    #     #
+    #     # pattern = re.compile('<input type="hidden" name="post_key" value="(.*?)">', re.S)
+    #     # post_key = re.search(pattern, r.text).group(1)
+    #     data = {
+    #         "pixiv_id": email,
+    #         "password": password,
+    #         "captcha": "",
+    #         "g_recaptcha_response": "",
+    #         "post_key": '885d11c7fa8ec15d7fbc538518ab516a',
+    #         "source": "pc",
+    #         "ref": "wwwtop_accounts_index",
+    #         "return_to": "https://www.pixiv.net/"
+    #     }
+    #     res = self.http.client.post("https://accounts.pixiv.net/api/login?lang=zh",
+    #                                 data=data)
+    #     return res
 
-    def user_detail(self, user_id: int | str):
+    def user_detail(self, user_id: int | str = 0):
         """
         用户详情
         :param user_id: 默认当前登录用户
@@ -207,7 +167,7 @@ class Pixiv:
                 'mangaSeries': manga_series,
             }
 
-    def work_detail(self, illust_id):
+    def work_detail(self, illust_id: int | str):
         """
         作品详情
         :param illust_id:
@@ -223,10 +183,11 @@ class Pixiv:
         r.body.type = TYPE_DICT[str(r.body.illustType)]
         if r.body.pageCount > 1:
             url = '%s/ajax/illust/%s/pages' % (self.hosts, illust_id)
-            illusts = self.request(url, "GET", **{'params': params})
-            r.body.urls = illusts.body
+            illust = self.request(url, "GET", **{'params': params})
+            r.body.urls = illust.body
 
-        return r.body
+        self.illust = r.body
+        return self
 
     def bookmark_new_illust(self, page: int | str = 1, mode="all"):
         """
@@ -408,8 +369,8 @@ class Pixiv:
             params['i'] = 0
 
         self.http.headers = {
-            'User-Agent': HEADERS['User-Agent'],
-            'Cookie': HEADERS['Cookie'],
+            'User-Agent': c4g.headers['User-Agent'],
+            'Cookie': c4g.headers['Cookie'],
         }
         html = self.http.request(url, "GET", **{'params': params})
         res = {'users': {}}
@@ -616,37 +577,37 @@ class Pixiv:
         r = self.request(url, "GET", **{'params': params})
         return r.body
 
-    def download_work(self, illust):
+    def download(self, illust=None):
         """
         下载作品 必须是 work_detail 返回的数据
         :param illust: self.work_detail返回的值
         :return:
         """
-        if config.sleep_counter >= int(self.config('Settings', 'max_sleep_counter')):
-            logger.info("\n开始休息 (＿ ＿*) Z z z\n")
-            time.sleep(int(self.config('Settings', 'sleep')))
-            config.sleep_counter = 0
+        if not illust:
+            illust = self.illust
+
+        is_sleep()
 
         title = unicodedata.normalize('NFC', illust.title)
         author = unicodedata.normalize('NFC', illust.userName)
         author = author.split('@')[0]
-        if self.config('Settings', 'is_filter_name'):
+        if c4g.read('Settings', 'is_filter_name'):
             # 有些系统不支持
             author = remove_emojis(author)
             title = filter_file_name(remove_emojis(title))
 
         logger.info(f"当前作品名称: {title}")
         if illust.pageCount == 1 and illust.type != 'ugoira':
-            config.sleep_counter += 1
-            filename = self.make_filename(illust, illust.urls.original)
+            c4g.sleep_counter += 1
+            filename = make_filename(illust, illust.urls.original)
             save_path = os.path.join(self.root, filename)
-            if os.path.exists(save_path):
+            if os.path.exists(save_path) and not c4g.is_repeat:
                 logger.info(f"保存位置[{save_path}]已存在")
                 return
 
             name = os.path.basename(save_path)
             path = os.path.dirname(save_path)
-            if work_exists(illust.id, os.path.splitext(name)[0]) and not bool(self.config('Settings', 'is_repeat')):
+            if pixiv_id_exists(illust.id) and not c4g.is_repeat:
                 logger.info(f"插画[{title}]已存在.")
                 return
 
@@ -658,21 +619,17 @@ class Pixiv:
         elif illust.pageCount > 1:
             threads = []
             for url in illust.urls:
-                if config.sleep_counter >= int(self.config('Settings', 'max_sleep_counter')):
-                    logger.info("\n开始休息 (￣ρ￣)..zzZZ\n")
-                    time.sleep(int(self.config('Settings', 'sleep')))
-                    config.sleep_counter = 0
+                is_sleep()
 
-                config.sleep_counter += 1
-                filename = self.make_filename(illust, url.urls.original)
+                c4g.sleep_counter += 1
+                filename = make_filename(illust, url.urls.original)
                 save_path = os.path.join(self.root, filename)
-                if os.path.exists(save_path):
+                if os.path.exists(save_path) and not c4g.is_repeat:
                     logger.info(f"保存位置[{save_path}]已存在")
                     continue
 
                 name = os.path.basename(save_path)
-                if work_exists(illust.id, os.path.splitext(name)[0]) and not bool(self.config('Settings', 'is_repeat')):
-                    logger.info(f"多图[{filename}]已存在")
+                if not c4g.is_repeat:
                     continue
 
                 path = os.path.dirname(save_path)
@@ -691,15 +648,15 @@ class Pixiv:
             logger.info(f"多图作品下载完毕.")
         elif illust.pageCount == 1 and illust.type == 'ugoira':
             logger.info("发现动图开始下载...")
-            config.sleep_counter += 1
-            filename = self.make_filename(illust)
+            c4g.sleep_counter += 1
+            filename = make_filename(illust)
             save_path = os.path.join(self.root, filename)
-            if os.path.exists(save_path):
+            if os.path.exists(save_path) and not c4g.is_repeat:
                 logger.info(f"保存位置[{save_path}]已存在")
                 return
 
             name = os.path.basename(save_path)
-            if work_exists(illust.id, os.path.splitext(name)[0]) and not bool(self.config('Settings', 'is_repeat')):
+            if pixiv_id_exists(illust.id) and not c4g.is_repeat:
                 logger.info(f"动图[{title}]已存在")
                 return
 
@@ -742,7 +699,7 @@ class Pixiv:
         errors = query_all_errors()
         for err in errors:
             try:
-                if os.path.exists(err[2]):
+                if os.path.exists(err[2]) and not c4g.is_repeat:
                     delete_error_by_id(err[0])
                     continue
 
@@ -750,13 +707,12 @@ class Pixiv:
                 suffix = os.path.splitext(url)[-1]
                 pixiv_id = re.search(r'(\d{5,})', url).group(1)
                 if suffix == '.zip':
-                    work = self.work_detail(pixiv_id)
-                    self.download_work(work)
+                    self.work_detail(pixiv_id).download()
                 else:
                     self.http.download(url, err[2])
 
                 if not pixiv_id_exists(pixiv_id):
-                    work = self.work_detail(pixiv_id)
+                    work = self.work_detail(pixiv_id).get()
                     insert_data(pixiv_id, work.title, work.userName, work.userId, work.type, err[2])
 
                 delete_error_by_id(err[0])
@@ -766,13 +722,15 @@ class Pixiv:
 
     def process_works(self, works):
         for illust in works.values():
-            title = remove_emojis(illust.title)
-            if pixiv_id_exists(illust.id) and not bool(self.config('Settings', 'is_repeat')):
+            title = unicodedata.normalize('NFC', illust.title)
+            if c4g.read('Settings', 'is_filter_name'):
+                title = filter_file_name(remove_emojis(title))
+
+            if pixiv_id_exists(illust.id) and not c4g.is_repeat:
                 logger.info(f"[{title}]已存在")
                 continue
             try:
-                work = self.work_detail(illust.id)
-                self.download_work(work)
+                self.work_detail(illust.id).download()
             except:
                 logger.error(traceback.format_exc())
                 continue
@@ -780,7 +738,7 @@ class Pixiv:
     def download_user_following(self, start_user: int | str = ''):
         """
         下载关注的所有用户的所有作品
-        :param start_user: 可以指定从那个作者开始
+        :param start_user: 可以指定从那个作者开始 名称或者id
         """
         logger.info('开始检查订阅内容')
         # 获取所有关注的用户
@@ -806,7 +764,7 @@ class Pixiv:
 
         for user in users:
             logger.info(f"当前抓取作者: {user.userName}")
-            if self.is_skip_user(user.userId):
+            if is_skip_user(user.userId):
                 logger.info(f"[{user.userId}] 跳过")
                 continue
 
@@ -822,18 +780,17 @@ class Pixiv:
         while True:
             works = self.bookmark_new_illust(page)
             for illust in works['thumbnails']['illust']:
-                if self.is_skip_user(illust.userId):
+                if is_skip_user(illust.userId):
                     logger.info(f"[{illust.userId}] 跳过")
                     continue
 
-                if work_exists(illust.id):
+                if pixiv_id_exists(illust.id):
                     logger.info("没有新的作品.")
                     logger.info(f"更新订阅完成.")
                     return
 
                 logger.info(f"发现新作品[{illust.title}], 开始下载...")
-                work = self.work_detail(illust.id)
-                self.download_work(work)
+                self.work_detail(illust.id).download()
                 logger.info(f"[{illust.title}], 下载完成.")
 
             page += 1
@@ -858,12 +815,13 @@ class Pixiv:
                 works.extend(page.works)
 
             for work in works:
-                detail = self.work_detail(work.id)
-                self.download_work(detail)
+                self.work_detail(work.id).download()
+
 
 if __name__ == '__main__':
     pixiv = Pixiv()
-    pixiv.work_detail(86130791)
+    print(pixiv.work_detail(120076621).get())
+    # pixiv.download_user_works(6350540)
 # res = re.search(r'(\d{5,})', 'https://i.pximg.net/img-original/img/2023/02/25/18/19/16/99831005_p67.jpg')
 # print(res.group(1))
 # pixiv.subscribing()
