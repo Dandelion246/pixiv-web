@@ -586,8 +586,12 @@ class Pixiv:
         if not illust:
             illust = self.illust
 
-        is_sleep()
+        if is_skip_user(illust.userId):
+            is_skip = input('检测到当前用户存在于跳过名单是否继续下载(y|n)?')
+            if is_skip != 'y':
+                return
 
+        is_sleep()
         title = unicodedata.normalize('NFC', illust.title)
         author = unicodedata.normalize('NFC', illust.userName)
         author = author.split('@')[0]
@@ -620,7 +624,6 @@ class Pixiv:
             threads = []
             for url in illust.urls:
                 is_sleep()
-
                 c4g.sleep_counter += 1
                 filename = make_filename(illust, url.urls.original)
                 save_path = os.path.join(self.root, filename)
@@ -629,9 +632,6 @@ class Pixiv:
                     continue
 
                 name = os.path.basename(save_path)
-                if not c4g.is_repeat:
-                    continue
-
                 path = os.path.dirname(save_path)
                 os.makedirs(path, exist_ok=True)
                 if not pixiv_id_exists(illust.id):
@@ -820,7 +820,7 @@ class Pixiv:
 
 if __name__ == '__main__':
     pixiv = Pixiv()
-    print(pixiv.work_detail(120076621).get())
+    print(pixiv.work_detail('120065009').download())
     # pixiv.download_user_works(6350540)
 # res = re.search(r'(\d{5,})', 'https://i.pximg.net/img-original/img/2023/02/25/18/19/16/99831005_p67.jpg')
 # print(res.group(1))
